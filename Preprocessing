@@ -1,0 +1,63 @@
+setwd("~/Desktop/Applied_Genomics/BMEC/brain_ldsc")
+
+library(Seurat)
+library(dplyr)
+library(patchwork)
+library(multtest)
+library(metap)
+
+data3.data <- Read10X(data.dir = "filtered_feature_bc_matrix/")
+
+# Initialize the Seurat object with the raw (non-normalized data)
+# Filter mt
+
+data3 <- CreateSeuratObject(counts = data3.data, project = "db",
+                            min.cells = 3, min.features = 200)
+
+data3[["percent.mt"]] <- PercentageFeatureSet(data3, pattern = "^mt-")
+data3 <- subset(data3, subset = nFeature_RNA > 200 & nFeature_RNA < 8000
+                & percent.mt < 20 & nCount_RNA > 400)
+
+dbdb_cells=colnames(data3)[(grep ("-1",colnames(data3)))]
+dbm_cells=colnames(data3)[(grep ("-2",colnames(data3)))]
+
+data3_dbdb <- subset(x = data3, cells = dbdb_cells)
+data3_dbm <- subset(x = data3, cells = dbm_cells)
+
+dbdbbrain.list <- list(data3_dbdb, data3_dbm)
+
+
+# normalize and identify variable features for each dataset independently
+dbdbbrain.list <- lapply(X = dbdbbrain.list, FUN = function(x) {
+  x <- NormalizeData(x)
+  x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)
+})
+
+# select features that are repeatedly variable across datasets for integration
+features <- SelectIntegrationFeatures(object.list = dbdbbrain.list)
+
+brain.anchors <- FindIntegrationAnchors(object.list = dbdbbrain.list, anchor.features = features)
+
+# this command creates an 'integrated' data assay
+brain.combined <- IntegrateData(anchorset = brain.anchors)
+
+# specify that we will perform downstream analysis on the corrected data note that the
+# original unmodified data still resides in the 'RNA' assay
+DefaultAssay(brain.combined) <- "integrated"
+
+# Run the standard workflow for visualization and clustering
+brain.combined <- ScaleData(brain.combined, verbose = FALSE)
+brain.combined <- RunPCA(brain.combined, npcs = 30, verbose = FALSE)
+brain.combined <- RunUMAP(brain.combined, reduction = "pca", dims = 1:30)
+brain.combined <- FindNeighbors(brain.combined, reduction = "pca", dims = 1:30)
+brain.combined <- FindClusters(brain.combined, resolution = 0.75)
+
+# Visualization
+p1 <- DimPlot(brain.combined, reduction = "umap", group.by = "orig.ident")
+p2 <- DimPlot(brain.combined, reduction = "umap", label = TRUE, repel = TRUE)
+p1 + p2
+
+DimPlot(brain.combined, reduction = "umap", split.by = "orig.ident")
+
+VlnPlot(brain.combined, features = c("Gpx1", "Cat"))
+
